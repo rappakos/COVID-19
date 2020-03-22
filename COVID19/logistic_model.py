@@ -37,8 +37,9 @@ class logistic_model():
         self.rawDays = [] # needed?
         self.days = []
         self.params = {}
-            
-            
+        self.deathsByCountry = {}
+
+    
     def load_data(self):
         print("loading ... ")        
         data = pd.read_csv(self.path)
@@ -58,6 +59,10 @@ class logistic_model():
         self.boolfilter['fr']=df['Province/State']=='France'
         self.boolfilter['pt']=df['Country/Region']=='Portugal'
         self.boolfilter['se']=df['Country/Region']=='Sweden'
+        self.boolfilter['at']=df['Country/Region']=='Austria'
+        self.boolfilter['ch']=df['Country/Region']=='Switzerland'
+        #self.boolfilter['ny']=df['Province/State']=='New York'
+        self.boolfilter['ro']=df['Country/Region']=='Romania'
         
         for ct in self.boolfilter:
             if ct not in self.hide:
@@ -69,7 +74,35 @@ class logistic_model():
         for i in range(delta.days + 1):
             self.days.append( (sdate + timedelta(days=i)).strftime("%m/%d/%y") )
         #print(self.days[-5:])
+    
+    def load_death_data(self):
+        # TODO check existence?
+        path=self.path.replace("Confirmed","Deaths")
+        data = pd.read_csv(path)
+        df = pd.DataFrame(data)
+        
+        boolfilter={}
+        boolfilter['de']=df['Country/Region']=='Germany'
+        boolfilter['it']=df['Country/Region']=='Italy'
+        boolfilter['jp']=df['Country/Region']=='Japan'
+        boolfilter['uk']=df['Province/State']=='United Kingdom' # 'UK'
+        boolfilter['kr']=df['Country/Region']== 'Korea, South' #'Republic of Korea'
+        #self.boolfilter['dp']=df['Province/State']=='Diamond Princess cruise ship'
+        boolfilter['es']=df['Country/Region']=='Spain'
+        boolfilter['hu']=df['Country/Region']=='Hungary'
+        boolfilter['fr']=df['Province/State']=='France'
+        boolfilter['pt']=df['Country/Region']=='Portugal'
+        boolfilter['se']=df['Country/Region']=='Sweden'
+        boolfilter['at']=df['Country/Region']=='Austria'
+        boolfilter['ch']=df['Country/Region']=='Switzerland'
+        #boolfilter['ny']=df['Province/State']=='New York'
+        boolfilter['ro']=df['Country/Region']=='Romania'
             
+        for ct in self.boolfilter:
+            if ct not in self.hide:
+                self.deathsByCountry[ct]=df[boolfilter[ct]][df.columns[4:]].T
+    
+    
     def plot_raw(self, yscale='log'):
         """ Plot the raw data in logarithmic scale
         
@@ -89,6 +122,22 @@ class logistic_model():
         plt.xticks(range(0,len(self.days),14), self.days[0::14])
         plt.show()
 
+    def plot_death_cases(self, yscale='log', ylim=5000):
+        if not self.deathsByCountry:
+            self.load_death_data()
+        
+        fig = plt.figure(figsize=(12,7))
+        ax = plt.subplot(111)
+        for country in self.deathsByCountry:
+            label= country+', max: '+str(self.deathsByCountry[country].to_numpy().max())
+            plt.scatter(self.days[:len(self.deathsByCountry[country])], self.deathsByCountry[country], label=label)
+
+        ax.legend()
+        plt.yscale(yscale)
+        plt.ylim(1,ylim)
+        plt.xticks(range(0,len(self.days),14), self.days[0::14])
+        plt.show()
+        
         
     def iterateOnce(self, days, values, A, B, r):
         """ Gauss-Newton method to iterate parameters with a residual function
@@ -146,7 +195,7 @@ class logistic_model():
                 dayIndex=[(j[0]-medIdx) for j in enumerate(self.rawDays.to_numpy())][medIdx:]     
                 # fit r
                 if country == 'kr':
-                    r,A,B = 9000, 3, 12 # does not converge ?!
+                    r,A,B = 9500, 3, 12 # does not converge ?!
                 else:
                     r,A,B = self.fit_logistic(dayIndex, dataArr)
                 #print('fitting: ', country, np.round(r,2), np.round(A,2), np.round(B,2),medIdx, dataArr[-1])
@@ -178,10 +227,12 @@ class logistic_model():
             plt.scatter(dayIndex ,[A*np.log(n/(r-n))+B for n in dataArr], label=country)
 
         # line
-        plt.plot(range(50), range(50))
-    
+        plt.plot(range(50), range(50))        
         ax.legend()
-        plt.ylim(-2,50)            
+        plt.ylim(-2,50)
+        plt.title("A ln( N/(1-N/r))+B vs t")        
+        plt.xlabel('A ln( N_i/(1-N_i/r))+B')
+        plt.ylabel('t_i [days]')
         
         # figure for data on log-linear plot
         ax = plt.subplot(122)
@@ -197,10 +248,15 @@ class logistic_model():
             # curves
             plt.plot(self.days,[r/(1+np.exp(-(j-medIdx)/A+B/A)) for j,d in enumerate(self.days)],label=country)
     
-            ax.legend(bbox_to_anchor=(1.1, 1.))   
-            plt.yscale(yscale)
-            plt.ylim(5,self.ylim)
-            plt.xticks(range(0,len(self.days),14), self.days[0::14])
+        ax.legend(bbox_to_anchor=(1.1, 1.))   
+        plt.yscale(yscale)
+        plt.ylim(5,self.ylim)
+        plt.xticks(range(0,len(self.days),14), self.days[0::14])
+        if yscale=='log':
+            plt.title("N_i (log scale)")
+        else:
+            plt.title("N_i")
+            
         
         plt.show()
         

@@ -7,7 +7,11 @@ from tabulate import tabulate
 
 class logistic_model():
     """ Class to model the COVID-19 confirmed cases with a simple logistic model.
-        Data is downloaded from the github repository CSSEGISandData/COVID-19.
+        Data is downloaded from either the github repository CSSEGISandData/COVID-19:
+        https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_19-covid-Confirmed.csv'
+        or from
+        
+        
     """
     
     def __init__(self, **kwargs):
@@ -15,11 +19,10 @@ class logistic_model():
         
         """
         prop_defaults = {
-                        'path': 'https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_19-covid-Confirmed.csv',
-                        'startDate': '2020-01-22',
+                        'source': 'ecdc',
                         'endDate': '2020-04-15',
                         'hide': [],
-                        'ylim': 100000
+                        'ylim': 150000
                         }
         
         for prop, default in prop_defaults.items():
@@ -31,56 +34,26 @@ class logistic_model():
         self.power = 0.5 # exponent for weighting data points
 
             
-        # init internal containers
-        self.boolfilter = {}
+        # init internal containers        
         self.dataByCountry = {}
         self.rawDays = [] # needed?
         self.days = []
         self.params = {}
         self.deathsByCountry = {}
 
-    
-    def load_data(self):
-        print("loading ... ")        
-        data = pd.read_csv(self.path)
+    def load_CSSEGISandData_data(self):
+        """ Downloads data from github repository CSSEGISandData.
+            Initializes rawDays, dataByCountry, and days containers.        
+        """
+        path=('https://raw.githubusercontent.com/CSSEGISandData/COVID-19/'
+              'master/csse_covid_19_data/csse_covid_19_time_series/time_series_19-covid-Confirmed.csv')
+                
+        data = pd.read_csv(path)
         #print(data.head())
         df = pd.DataFrame(data)
         # init days list -- exclude Province/State, Country/Region, Latitude, Longitude
         self.rawDays = df.columns[4:]
         # 
-        self.boolfilter['de']=df['Country/Region']=='Germany'
-        self.boolfilter['it']=df['Country/Region']=='Italy'
-        self.boolfilter['jp']=df['Country/Region']=='Japan'
-        self.boolfilter['uk']=df['Province/State']=='United Kingdom' # 'UK'
-        self.boolfilter['kr']=df['Country/Region']== 'Korea, South' #'Republic of Korea'
-        #self.boolfilter['dp']=df['Province/State']=='Diamond Princess cruise ship'
-        self.boolfilter['es']=df['Country/Region']=='Spain'
-        self.boolfilter['hu']=df['Country/Region']=='Hungary'
-        self.boolfilter['fr']=df['Province/State']=='France'
-        self.boolfilter['pt']=df['Country/Region']=='Portugal'
-        self.boolfilter['se']=df['Country/Region']=='Sweden'
-        self.boolfilter['at']=df['Country/Region']=='Austria'
-        self.boolfilter['ch']=df['Country/Region']=='Switzerland'
-        #self.boolfilter['ny']=df['Province/State']=='New York'
-        self.boolfilter['ro']=df['Country/Region']=='Romania'
-        
-        for ct in self.boolfilter:
-            if ct not in self.hide:
-                self.dataByCountry[ct]=df[self.boolfilter[ct]][df.columns[4:]].T
-            
-        sdate = datetime.strptime(self.startDate, '%Y-%m-%d')
-        edate = datetime.strptime(self.endDate, '%Y-%m-%d')
-        delta = edate - sdate
-        for i in range(delta.days + 1):
-            self.days.append( (sdate + timedelta(days=i)).strftime("%m/%d/%y") )
-        #print(self.days[-5:])
-    
-    def load_death_data(self):
-        # TODO check existence?
-        path=self.path.replace("Confirmed","Deaths")
-        data = pd.read_csv(path)
-        df = pd.DataFrame(data)
-        
         boolfilter={}
         boolfilter['de']=df['Country/Region']=='Germany'
         boolfilter['it']=df['Country/Region']=='Italy'
@@ -95,12 +68,94 @@ class logistic_model():
         boolfilter['se']=df['Country/Region']=='Sweden'
         boolfilter['at']=df['Country/Region']=='Austria'
         boolfilter['ch']=df['Country/Region']=='Switzerland'
-        #boolfilter['ny']=df['Province/State']=='New York'
+        #self.boolfilter['ny']=df['Province/State']=='New York'
         boolfilter['ro']=df['Country/Region']=='Romania'
-            
-        for ct in self.boolfilter:
+        
+        for ct in boolfilter:
             if ct not in self.hide:
-                self.deathsByCountry[ct]=df[boolfilter[ct]][df.columns[4:]].T
+                self.dataByCountry[ct]=df[boolfilter[ct]][df.columns[4:]].T
+            
+        self.startDate='2020-01-22'
+        sdate = datetime.strptime(self.startDate, '%Y-%m-%d')
+        edate = datetime.strptime(self.endDate, '%Y-%m-%d')
+        delta = edate - sdate
+        for i in range(delta.days + 1):
+            self.days.append( (sdate + timedelta(days=i)).strftime("%m/%d/%y") )
+    
+    def load_ecdc_data(self):
+        tstamp=(datetime.today()).strftime('%Y-%m-%d')
+        path= ('https://www.ecdc.europa.eu/sites/default/files/documents/'
+               'COVID-19-geographic-disbtribution-worldwide-')
+        try:
+            file = path + tstamp+'.xlsx'
+            data = pd.read_excel(file)
+        except:
+            tstamp=(datetime.today()-timedelta(days=1)).strftime('%Y-%m-%d')
+            file = path + tstamp+'.xlsx'
+            data = pd.read_excel(file)
+         
+        df=pd.DataFrame(data)
+        
+        
+        self.startDate='2020-02-01'        
+         
+        boolfilter = {}
+        boolfilter['de']='DE'
+        boolfilter['it']='IT'      
+        boolfilter['uk']='UK'
+        boolfilter['jp']='JP'
+        boolfilter['es']='ES'
+        #boolfilter['hu']='HU'
+        boolfilter['fr']='FR'
+        #boolfilter['pt']='PT'
+        boolfilter['se']='SE'
+        boolfilter['at']='AT'
+        boolfilter['ch']='CH'        
+        #boolfilter['ro']='RO'
+        boolfilter['kr*']='KR'
+        
+        for ct in boolfilter:
+            if ct not in self.hide:
+                temp = df[(df['GeoId']==boolfilter[ct]) & (df['Year'] >= 2020) & (df['Month'] >= 2)]
+                if ct=='de':
+                    self.rawDays = temp.sort_values(by='DateRep')['DateRep']
+                self.dataByCountry[ct]=temp.sort_values(by='DateRep')['Cases'].cumsum()
+                
+        
+        #print(self.dataByCountry['de'])
+        
+        
+        sdate = datetime.strptime(self.startDate, '%Y-%m-%d')
+        edate = datetime.strptime(self.endDate, '%Y-%m-%d')
+        delta = edate - sdate
+        for i in range(delta.days + 1):
+            self.days.append( (sdate + timedelta(days=i)).strftime("%m/%d/%y") )
+        
+        
+    
+    def load_data(self):
+        print("loading ... ")
+        if self.source=='CSSEGISandData':
+            self.load_CSSEGISandData_data()
+        elif self.source=='ecdc':
+            self.load_ecdc_data()
+        else:
+            print('unsupported source')      
+
+        self.lastday = self.rawDays.max().strftime("%m/%d/%y")
+    
+    def load_death_data(self):
+        # TODO check existence?
+        #path=self.path.replace("Confirmed","Deaths")
+        #data = pd.read_csv(path)
+        #df = pd.DataFrame(data)
+        
+        #boolfilter={}
+            
+        #for ct in self.boolfilter:
+        #    if ct not in self.hide:
+        #        self.deathsByCountry[ct]=df[boolfilter[ct]][df.columns[4:]].T
+        print('')
     
     
     def plot_raw(self, yscale='log'):
@@ -122,7 +177,7 @@ class logistic_model():
         plt.xticks(range(0,len(self.days),14), self.days[0::14])
         plt.show()
 
-    def plot_death_cases(self, yscale='log', ylim=5000):
+    def plot_death_cases(self, yscale='log', ylim=8000):
         if not self.deathsByCountry:
             self.load_death_data()
         
@@ -184,7 +239,7 @@ class logistic_model():
                 if country != 'hu':
                     medIdx=max([j for j,n in enumerate(dataArr) if n < 50])
                     n0=dataArr[medIdx]
-                elif country == 'kr':
+                elif country == 'kr*':
                     medIdx=max([j for j,n in enumerate(dataArr) if n < 500])
                     n0=dataArr[medIdx]
                 else:
@@ -194,15 +249,41 @@ class logistic_model():
                 dataArr=dataArr[medIdx:]
                 dayIndex=[(j[0]-medIdx) for j in enumerate(self.rawDays.to_numpy())][medIdx:]     
                 # fit r
-                if country == 'kr':
+                if country == 'kr*':
                     r,A,B = 9500, 3, 12 # does not converge ?!
                 else:
                     r,A,B = self.fit_logistic(dayIndex, dataArr)
-                #print('fitting: ', country, np.round(r,2), np.round(A,2), np.round(B,2),medIdx, dataArr[-1])
-                self.params[country] = {'country': country, 'r': r, 'A': A, 'B': B, 'medIdx': medIdx, 'current': dataArr[-1]}
- 
-        print(tabulate([[self.params[ct]['country'], self.params[ct]['current'] , np.round(self.params[ct]['r']), np.round(self.params[ct]['A'],2) ] for ct in self.params], headers=['Country','Current','Total','Rate']))
 
+                self.params[country] = {'country': country, 
+                                        'r': r, 
+                                        'A': A, 
+                                        'B': B, 
+                                        'medIdx': medIdx, 
+                                        'current': dataArr[-1], 
+                                        'n0':n0, 
+                                        't0':self.rawDays.to_numpy()[medIdx]}
+ 
+        # print data
+        tbl = []
+        currentIdx = self.days.index(self.lastday)
+        #print(currentIdx, self.days[currentIdx])
+        
+        for ct in self.params:
+            p = self.params[ct]
+            A, B, r, medIdx = p['A'], p['B'], p['r'], p['medIdx']
+            
+            vtomorrow = r/(1+np.exp(-(currentIdx+1-medIdx)/A+B/A))
+            vtoweek= r/(1+np.exp(-(currentIdx+7-medIdx)/A+B/A))
+            tbl.append([ct, p['current'],np.round(vtomorrow),np.round(vtoweek), np.round(r), np.round(A*np.log(2.0),2) ])
+
+        tbl.sort(key=lambda x: -x[1])
+        print(tabulate(tbl, headers=['Country',
+                                     'Current ('+ self.lastday + ')', 
+                                     'Next day',
+                                     'Next week',
+                                     'Total (predicted)',
+                                     'Duplication rate (days)']))
+    
         
     def plot_fitted(self, yscale='log'):
         """ Plot data with fitted curves

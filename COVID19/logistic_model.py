@@ -30,8 +30,9 @@ class logistic_model():
 
         # constants
         self.EPS = 0.0001
-        self.maxiter = 50
-        self.power = 0.5 # exponent for weighting data points
+        self.maxiter = 100
+        self.rate = 0.5
+        self.power = 1. # exponent for weighting data points
 
             
         # init internal containers        
@@ -107,11 +108,11 @@ class logistic_model():
         boolfilter['es']='ES'
         #boolfilter['hu']='HU'
         boolfilter['fr']='FR'
-        #boolfilter['pt']='PT'
+        #boolfilter['pt']='PT' # PT starts at 2020-03-03 ?!
         boolfilter['se']='SE'
         boolfilter['at']='AT'
         boolfilter['ch']='CH'        
-        #boolfilter['ro']='RO'
+        #boolfilter['ro']='RO' # 
         boolfilter['kr*']='KR'
         
         for ct in boolfilter:
@@ -120,7 +121,7 @@ class logistic_model():
                 if ct=='de':
                     self.rawDays = temp.sort_values(by='DateRep')['DateRep']
                 self.dataByCountry[ct]=temp.sort_values(by='DateRep')['Cases'].cumsum()
-                
+                assert(len(self.rawDays)==len(self.dataByCountry[ct]))
         
         #print(self.dataByCountry['de'])
         
@@ -134,7 +135,7 @@ class logistic_model():
         
     
     def load_data(self):
-        print("loading ... ")
+        print("Loading ... ")
         if self.source=='CSSEGISandData':
             self.load_CSSEGISandData_data()
         elif self.source=='ecdc':
@@ -145,16 +146,6 @@ class logistic_model():
         self.lastday = self.rawDays.max().strftime("%m/%d/%y")
     
     def load_death_data(self):
-        # TODO check existence?
-        #path=self.path.replace("Confirmed","Deaths")
-        #data = pd.read_csv(path)
-        #df = pd.DataFrame(data)
-        
-        #boolfilter={}
-            
-        #for ct in self.boolfilter:
-        #    if ct not in self.hide:
-        #        self.deathsByCountry[ct]=df[boolfilter[ct]][df.columns[4:]].T
         print('')
     
     
@@ -178,20 +169,7 @@ class logistic_model():
         plt.show()
 
     def plot_death_cases(self, yscale='log', ylim=8000):
-        if not self.deathsByCountry:
-            self.load_death_data()
-        
-        fig = plt.figure(figsize=(12,7))
-        ax = plt.subplot(111)
-        for country in self.deathsByCountry:
-            label= country+', max: '+str(self.deathsByCountry[country].to_numpy().max())
-            plt.scatter(self.days[:len(self.deathsByCountry[country])], self.deathsByCountry[country], label=label)
-
-        ax.legend()
-        plt.yscale(yscale)
-        plt.ylim(1,ylim)
-        plt.xticks(range(0,len(self.days),14), self.days[0::14])
-        plt.show()
+        print('')
         
         
     def iterateOnce(self, days, values, A, B, r):
@@ -200,15 +178,17 @@ class logistic_model():
         """
         y, x= np.array(days).flatten(), np.array(values).flatten()
         assert(len(x)==len(y))
+        #if len(values) < len(days):
+        #    x = np.pad(x, (len(days) - len(values), 0), 'constant')
+
         # Gauss-Newton
-        #weight = np.eye(len(x)) -- 
         weight= np.diag([np.power(j,self.power) for j in range(len(x))])
         beta = [[A],[B],[r]]
         residuals = [[y[i] - A*np.log(x[i]/(r-x[i]))-B] for i in range(len(y))]
         jacobi = [[np.log(x[i]/(r-x[i])), 1.0,-A/(r-x[i])] for i in range(len(y))]
         #print(np.shape(beta), np.shape(residuals), np.shape(jacobi))
         jjinv = np.linalg.inv(np.transpose(jacobi).dot(weight).dot(jacobi))
-        beta = beta + (jjinv.dot(np.transpose(jacobi).dot(weight).dot(residuals)))    
+        beta = beta + self.rate*(jjinv.dot(np.transpose(jacobi).dot(weight).dot(residuals)))    
         
         return beta[0][0],beta[1][0], beta[2][0]
         
@@ -240,17 +220,18 @@ class logistic_model():
                     medIdx=max([j for j,n in enumerate(dataArr) if n < 50])
                     n0=dataArr[medIdx]
                 elif country == 'kr*':
-                    medIdx=max([j for j,n in enumerate(dataArr) if n < 500])
+                    medIdx=max([j for j,n in enumerate(dataArr) if n < 9000])
                     n0=dataArr[medIdx]
                 else:
-                    medIdx=max([j for j,n in enumerate(dataArr) if n < 10])
+                    medIdx=max([j for j,n in enumerate(dataArr) if n < 20])
                     n0=dataArr[medIdx]
                 # truncate
                 dataArr=dataArr[medIdx:]
                 dayIndex=[(j[0]-medIdx) for j in enumerate(self.rawDays.to_numpy())][medIdx:]     
                 # fit r
                 if country == 'kr*':
-                    r,A,B = 9500, 3, 12 # does not converge ?!
+                    r,A,B = 9500, 6, 16 # does not converge ?!
+                    #r,A,B = self.fit_logistic(dayIndex, dataArr)
                 else:
                     r,A,B = self.fit_logistic(dayIndex, dataArr)
 

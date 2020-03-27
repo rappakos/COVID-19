@@ -7,11 +7,7 @@ from tabulate import tabulate
 
 class logistic_model():
     """ Class to model the COVID-19 confirmed cases with a simple logistic model.
-        Data is downloaded from either the github repository CSSEGISandData/COVID-19:
-        https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_19-covid-Confirmed.csv'
-        or from
-        
-        
+        Data is downloaded from the ECDC website.
     """
     
     def __init__(self, **kwargs):
@@ -22,7 +18,7 @@ class logistic_model():
                         'source': 'ecdc',
                         'endDate': '2020-04-15',
                         'hide': ['KR*'],
-                        'ylim': 150000
+                        'ylim': 800000
                         }
         
         for prop, default in prop_defaults.items():
@@ -42,47 +38,6 @@ class logistic_model():
         self.params = {}
         self.deathsByCountry = {}
 
-    def load_CSSEGISandData_data(self):
-        """ Downloads data from github repository CSSEGISandData.
-            Initializes rawDays, dataByCountry, and days containers.        
-        """
-        path=('https://raw.githubusercontent.com/CSSEGISandData/COVID-19/'
-              'master/csse_covid_19_data/csse_covid_19_time_series/time_series_19-covid-Confirmed.csv')
-                
-        data = pd.read_csv(path)
-        #print(data.head())
-        df = pd.DataFrame(data)
-        # init days list -- exclude Province/State, Country/Region, Latitude, Longitude
-        self.rawDays = df.columns[4:]
-        # 
-        boolfilter={}
-        boolfilter['de']=df['Country/Region']=='Germany'
-        boolfilter['it']=df['Country/Region']=='Italy'
-        boolfilter['jp']=df['Country/Region']=='Japan'
-        boolfilter['uk']=df['Province/State']=='United Kingdom' # 'UK'
-        boolfilter['kr']=df['Country/Region']== 'Korea, South' #'Republic of Korea'
-        #self.boolfilter['dp']=df['Province/State']=='Diamond Princess cruise ship'
-        boolfilter['es']=df['Country/Region']=='Spain'
-        boolfilter['hu']=df['Country/Region']=='Hungary'
-        boolfilter['fr']=df['Province/State']=='France'
-        boolfilter['pt']=df['Country/Region']=='Portugal'
-        boolfilter['se']=df['Country/Region']=='Sweden'
-        boolfilter['at']=df['Country/Region']=='Austria'
-        boolfilter['ch']=df['Country/Region']=='Switzerland'
-        #self.boolfilter['ny']=df['Province/State']=='New York'
-        boolfilter['ro']=df['Country/Region']=='Romania'
-        
-        for ct in boolfilter:
-            if ct not in self.hide:
-                self.dataByCountry[ct]=df[boolfilter[ct]][df.columns[4:]].T
-            
-        self.startDate='2020-01-22'
-        sdate = datetime.strptime(self.startDate, '%Y-%m-%d')
-        edate = datetime.strptime(self.endDate, '%Y-%m-%d')
-        delta = edate - sdate
-        for i in range(delta.days + 1):
-            self.days.append( (sdate + timedelta(days=i)).strftime("%m/%d/%y") )
-    
     def load_ecdc_data(self):
         tstamp=(datetime.today()).strftime('%Y-%m-%d')
         path= ('https://www.ecdc.europa.eu/sites/default/files/documents/'
@@ -120,11 +75,14 @@ class logistic_model():
         boolfilter['AT']='AT'
         boolfilter['CH']='CH'        
         #boolfilter['ro']='RO'
-        boolfilter['KR*']='KR'       
+        boolfilter['KR*']='KR'
+        boolfilter['US']='US'
         
         for ct in boolfilter:
             if ct not in self.hide:
                 temp = df[(df['GeoId']==boolfilter[ct]) & (df['Year'] >= 2020) & (df['Month'] >= 2)]
+                
+                # confirmed cases
                 self.dataByCountry[ct]=temp.sort_values(by='DateRep')['Cases'].cumsum()
                 # pad with 0 if data starts later
                 if(len(self.dataByCountry[ct]) < len(self.rawDays)):
@@ -133,20 +91,22 @@ class logistic_model():
                     
                 assert(len(self.dataByCountry[ct]) == len(self.rawDays))
             
+                # death cases
+                self.deathsByCountry[ct]=temp.sort_values(by='DateRep')['Deaths'].cumsum()
+                if(len(self.deathsByCountry[ct]) < len(self.rawDays)):
+                    zeros =  [0 for i in range(len(self.rawDays)-len(self.deathsByCountry[ct]))]
+                    self.deathsByCountry[ct] = pd.concat([pd.DataFrame(zeros), self.deathsByCountry[ct]], ignore_index=True)
+                
+                assert(len(self.deathsByCountry[ct]) == len(self.rawDays))
    
     def load_data(self):
         print("Loading ... ")
-        if self.source=='CSSEGISandData':
-            self.load_CSSEGISandData_data()
-        elif self.source=='ecdc':
+        if self.source=='ecdc':
             self.load_ecdc_data()
         else:
             print('unsupported source')      
 
         self.lastday = self.rawDays.max().strftime("%m/%d/%y")
-    
-    def load_death_data(self):
-        print('not implemented at the moment')
     
     
     def plot_raw(self, yscale='log'):
@@ -169,8 +129,20 @@ class logistic_model():
         plt.show()
 
     def plot_death_cases(self, yscale='log', ylim=8000):
-        print('not implemented at the moment')
-        
+        if not self.deathsByCountry:
+            self.load_data()
+        fig = plt.figure(figsize=(12,7))
+        ax = plt.subplot(111)
+        for country in self.deathsByCountry:
+            label= country+', max: '+str(self.deathsByCountry[country].to_numpy().max())
+            plt.scatter(self.days[:len(self.deathsByCountry[country])], self.deathsByCountry[country], label=label)
+
+        ax.legend()
+        plt.yscale(yscale)
+        plt.ylim(1,ylim)
+        plt.xticks(range(0,len(self.days),14), self.days[0::14])
+        plt.show()           
+          
         
     def iterateOnce(self, days, values, A, B, r):
         """ Gauss-Newton method to iterate parameters with a residual function
@@ -195,7 +167,7 @@ class logistic_model():
         """ Iterate parameter updates until convergence        
         """
         # init
-        i, A, B, r, delta = 0, 10, 20, 1.2*values.max(), 10000
+        i, A, B, r, delta = 0, 10, 20, 1.5*values.max(), 10000
         # iterate
         while i < self.maxiter and delta > self.EPS*r:
             A0, B0, r0 = A,B,r
@@ -214,15 +186,20 @@ class logistic_model():
                 dataArr = self.dataByCountry[country].to_numpy()
                 
                 # initial condition : last day with less than 100 confirmed to exclude imported confirmed cases
-                if country != 'HU':
-                    medIdx=max([j for j,n in enumerate(dataArr) if n < 100])
+                if country == 'HU':
+                    medIdx=max([j for j,n in enumerate(dataArr) if n < 20])
                     n0=dataArr[medIdx]
                 elif country == 'KR*':
                     medIdx=max([j for j,n in enumerate(dataArr) if n < 9000])
                     n0=dataArr[medIdx]
+                elif country == 'US':
+                    medIdx=max([j for j,n in enumerate(dataArr) if n < 1000])
+                    n0=dataArr[medIdx]                    
                 else:
-                    medIdx=max([j for j,n in enumerate(dataArr) if n < 20])
+                    medIdx=max([j for j,n in enumerate(dataArr) if n < 100])
                     n0=dataArr[medIdx]
+
+                    
                 # truncate
                 dataArr=dataArr[medIdx:]
                 dayIndex=[(j[0]-medIdx) for j in enumerate(self.rawDays.to_numpy())][medIdx:]     

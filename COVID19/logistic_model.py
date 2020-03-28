@@ -18,20 +18,22 @@ class logistic_model():
                         'source': 'ecdc',
                         'endDate': '2020-04-15',
                         'hide': ['KR*'],
-                        'ylim': 800000
+                        'show': [],
+                        'ylim': 300000
                         }
         
         for prop, default in prop_defaults.items():
             setattr(self, prop, kwargs.get(prop, default))
 
         # constants
-        self.EPS = 0.0001
+        self.EPS = 0.00001
         self.maxiter = 100
         self.rate = 1.
-        self.power = 0.1 # exponent for weighting data points
+        self.power = 0.5 # exponent for weighting data points
 
             
         # init internal containers        
+        self.columnNames = {}
         self.dataByCountry = {}
         self.rawDays = [] # needed?
         self.days = []
@@ -52,9 +54,14 @@ class logistic_model():
          
         df=pd.DataFrame(data)
         
+        # at some points the columns names got lower cased
+        self.columnNames = {c.lower(): c for c in df.columns.to_numpy()}
+        
+        
         # init day lists
-        self.startDate='2020-02-01'        
-        self.rawDays = df[(df['GeoId']=='DE') & (df['Year'] >= 2020) & (df['Month'] >= 2)].sort_values(by='DateRep')['DateRep']
+        self.startDate='2020-02-15'        
+        self.rawDays = df[(df[self.columnNames['geoid']]=='DE') & 
+                          (df[self.columnNames['daterep']] >= self.startDate)].sort_values(by=self.columnNames['daterep'])[self.columnNames['daterep']]
         sdate = datetime.strptime(self.startDate, '%Y-%m-%d')
         edate = datetime.strptime(self.endDate, '%Y-%m-%d')
         delta = edate - sdate
@@ -77,27 +84,30 @@ class logistic_model():
         #boolfilter['ro']='RO'
         boolfilter['KR*']='KR'
         boolfilter['US']='US'
+        boolfilter['NL']='NL'
+        boolfilter['BE']='BE'
+        
         
         for ct in boolfilter:
-            if ct not in self.hide:
-                temp = df[(df['GeoId']==boolfilter[ct]) & (df['Year'] >= 2020) & (df['Month'] >= 2)]
+            if (self.show and ct in self.show) or (not self.show and ct not in self.hide):
+                    temp = df[(df[self.columnNames['geoid']]==boolfilter[ct]) & (df[self.columnNames['daterep']] >= self.startDate)]
                 
-                # confirmed cases
-                self.dataByCountry[ct]=temp.sort_values(by='DateRep')['Cases'].cumsum()
-                # pad with 0 if data starts later
-                if(len(self.dataByCountry[ct]) < len(self.rawDays)):
-                    zeros =  [0 for i in range(len(self.rawDays)-len(self.dataByCountry[ct]))]
-                    self.dataByCountry[ct] = pd.concat([pd.DataFrame(zeros), self.dataByCountry[ct]], ignore_index=True)
+                    # confirmed cases
+                    self.dataByCountry[ct]=temp.sort_values(by=self.columnNames['daterep'])[self.columnNames['cases']].cumsum()
+                    # pad with 0 if data starts later
+                    if(len(self.dataByCountry[ct]) < len(self.rawDays)):
+                        zeros =  [0 for i in range(len(self.rawDays)-len(self.dataByCountry[ct]))]
+                        self.dataByCountry[ct] = pd.concat([pd.DataFrame(zeros), self.dataByCountry[ct]], ignore_index=True)
                     
-                assert(len(self.dataByCountry[ct]) == len(self.rawDays))
+                    assert(len(self.dataByCountry[ct]) == len(self.rawDays))
             
-                # death cases
-                self.deathsByCountry[ct]=temp.sort_values(by='DateRep')['Deaths'].cumsum()
-                if(len(self.deathsByCountry[ct]) < len(self.rawDays)):
-                    zeros =  [0 for i in range(len(self.rawDays)-len(self.deathsByCountry[ct]))]
-                    self.deathsByCountry[ct] = pd.concat([pd.DataFrame(zeros), self.deathsByCountry[ct]], ignore_index=True)
+                    # death cases
+                    self.deathsByCountry[ct]=temp.sort_values(by=self.columnNames['daterep'])[self.columnNames['deaths']].cumsum()
+                    if(len(self.deathsByCountry[ct]) < len(self.rawDays)):
+                        zeros =  [0 for i in range(len(self.rawDays)-len(self.deathsByCountry[ct]))]
+                        self.deathsByCountry[ct] = pd.concat([pd.DataFrame(zeros), self.deathsByCountry[ct]], ignore_index=True)
                 
-                assert(len(self.deathsByCountry[ct]) == len(self.rawDays))
+                    assert(len(self.deathsByCountry[ct]) == len(self.rawDays))
    
     def load_data(self):
         print("Loading ... ")
@@ -152,13 +162,16 @@ class logistic_model():
         assert(len(x)==len(y))
 
         # Gauss-Newton
-        weight= np.diag([np.power(j,self.power) for j in range(len(x))])
+        weight= np.diag([np.power(j+1.,self.power) for j in range(len(x))])
         beta = [[A],[B],[r]]
         residuals = [[y[i] - A*np.log(x[i]/(r-x[i]))-B] for i in range(len(y))]
-        jacobi = [[np.log(x[i]/(r-x[i])), 1.0,-A/(r-x[i])] for i in range(len(y))]
-        #print(np.shape(beta), np.shape(residuals), np.shape(jacobi))
-        jjinv = np.linalg.inv(np.transpose(jacobi).dot(weight).dot(jacobi))
-        beta = beta + self.rate*(jjinv.dot(np.transpose(jacobi).dot(weight).dot(residuals)))    
+        jacobi = [[np.log(x[i]/(r-x[i])), 1.0,-A/(r-x[i])] for i in range(len(y))]        
+        #G=np.sum([[[0,0,-1.0*residuals[i,0]/(r-x[i])],[0,0,0],[-1.0*residuals[i,0]/(r-x[i]),0, residuals[i,0]*A/(r-x[i])**2]] for i in range(len(y))])
+        #print(np.shape(beta), np.shape(residuals), np.shape(jacobi))        
+        jj = np.transpose(jacobi).dot(weight).dot(jacobi)
+        gradient = np.transpose(jacobi).dot(weight).dot(residuals)
+        HessianInv = np.linalg.inv(jj)
+        beta = beta + self.rate*(HessianInv.dot(gradient))    
         
         return beta[0][0],beta[1][0], beta[2][0]
         
@@ -167,7 +180,7 @@ class logistic_model():
         """ Iterate parameter updates until convergence        
         """
         # init
-        i, A, B, r, delta = 0, 10, 20, 1.5*values.max(), 10000
+        i, A, B, r, delta = 0, 10, 20, 1.2*values.max(), 10000
         # iterate
         while i < self.maxiter and delta > self.EPS*r:
             A0, B0, r0 = A,B,r
@@ -175,6 +188,28 @@ class logistic_model():
             delta=np.abs(r-r0)
             i+=1    
         return r, A, B   
+        
+    def fit_logistic_with_err(self, days, values):   
+        # initial values
+        r, A, B = self.fit_logistic(days, values);
+        
+        # calculate variance of daily new cases ?
+        #relVar = np.std([(r/(1+np.exp(-days[i]/A+B/A))/values[i] - 1.0) for i in range(len(values))])
+        #print(relVar)
+        delta_r = 0
+        
+        # add error to values
+        #resList=[]
+        #for i in range(100):
+        #    ran = np.random.normal(0, 1, len(values))
+        #    valuesTilde = np.array([values[i]*(1.0 + relVar*ran[i]) for i in range(len(values))])
+        #    rTilde, Atilde, Btilde=self.fit_logistic(days, valuesTilde)
+        #    resList.append([rTilde, Atilde, Btilde])
+        #        
+        #[delta_r, delta_A, delta_B] = np.std(resList, axis=0)
+       
+        
+        return r, A, B, delta_r
         
     def process_data(self):
         """ Fit parameters for each country
@@ -203,15 +238,16 @@ class logistic_model():
                 # truncate
                 dataArr=dataArr[medIdx:]
                 dayIndex=[(j[0]-medIdx) for j in enumerate(self.rawDays.to_numpy())][medIdx:]     
-                # fit r
+                # fit
                 if country == 'KR*':
                     r,A,B = 9500, 6, 16 # does not converge ?!
                     #r,A,B = self.fit_logistic(dayIndex, dataArr)
                 else:
-                    r,A,B = self.fit_logistic(dayIndex, dataArr)
+                    r,A,B, delta_r = self.fit_logistic_with_err(dayIndex, dataArr)
 
                 self.params[country] = {'country': country, 
-                                        'r': r, 
+                                        'r': r,
+                                        'delta_r': delta_r,
                                         'A': A, 
                                         'B': B, 
                                         'medIdx': medIdx, 
@@ -228,17 +264,25 @@ class logistic_model():
         
         for ct in self.params:
             p = self.params[ct]
-            A, B, r, medIdx = p['A'], p['B'], p['r'], p['medIdx']            
+            A, B, r, medIdx, delta_r = p['A'], p['B'], p['r'], p['medIdx'], p['delta_r']
             vtomorrow = r/(1+np.exp(-(currentIdx+1-medIdx)/A+B/A))
             vtoweek= r/(1+np.exp(-(currentIdx+7-medIdx)/A+B/A))
-            tbl.append([ct, p['current'],np.round(vtomorrow),np.round(vtoweek), np.round(r), np.round(A*np.log(2.0),2) ])
+            tbl.append([ct, p['current'],
+                        np.round(vtomorrow),
+                        np.round(vtoweek), 
+                        str(np.round(r)),
+                        np.round(A*np.log(2.0),2)
+                        #(self.rawDays.max() + timedelta(days=medIdx-int(np.round(B)))).strftime('%Y-%m-%d')
+                       ])
 
         print(tabulate(tbl, headers=['Country',
                                      'Current ('+ self.lastday + ')', 
                                      'Next day',
                                      'Next week',
                                      'Total (predicted)',
-                                     'Duplication rate (days)']))
+                                     'Duplication rate (days)'
+                                     #'Peak'
+                                    ]))
     
         
     def plot_fitted(self, yscale='log'):
@@ -264,7 +308,7 @@ class logistic_model():
 
         # line
         plt.plot(range(50), range(50))        
-        ax.legend(prop={'size':16})
+        ax.legend(prop={'size':14})
         plt.ylim(-2,50)
         plt.title("A ln( N/(1-N/r))+B vs t")        
         plt.xlabel('A ln( N_i/(1-N_i/r))+B')
@@ -286,7 +330,7 @@ class logistic_model():
     
         ax.legend(bbox_to_anchor=(1.02, 1.02), prop={'size':16}, labelspacing=0.8)   
         plt.yscale(yscale)
-        plt.ylim(5,self.ylim)
+        plt.ylim(100,self.ylim)
         plt.xticks(range(0,len(self.days),14), self.days[0::14])
         if yscale=='log':
             plt.title("N_i (log scale)")

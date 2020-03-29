@@ -19,7 +19,8 @@ class logistic_model():
                         'endDate': '2020-04-15',
                         'hide': ['KR*'],
                         'show': [],
-                        'ylim': 300000
+                        'ylim': 300000,
+                        'dylim': 15000
                         }
         
         for prop, default in prop_defaults.items():
@@ -39,6 +40,7 @@ class logistic_model():
         self.days = []
         self.params = {}
         self.deathsByCountry = {}
+        self.death_params = {}
 
     def load_ecdc_data(self):
         tstamp=(datetime.today()).strftime('%Y-%m-%d')
@@ -86,6 +88,7 @@ class logistic_model():
         boolfilter['US']='US'
         boolfilter['NL']='NL'
         boolfilter['BE']='BE'
+        boolfilter['CA']='CA'
         
         
         for ct in boolfilter:
@@ -218,34 +221,34 @@ class logistic_model():
             self.load_data()
         
         for country in self.dataByCountry:
-                dataArr = self.dataByCountry[country].to_numpy()
+            dataArr = self.dataByCountry[country].to_numpy()
                 
-                # initial condition : last day with less than 100 confirmed to exclude imported confirmed cases
-                if country == 'HU':
-                    medIdx=max([j for j,n in enumerate(dataArr) if n < 20])
-                    n0=dataArr[medIdx]
-                elif country == 'KR*':
-                    medIdx=max([j for j,n in enumerate(dataArr) if n < 9000])
-                    n0=dataArr[medIdx]
-                elif country == 'US':
-                    medIdx=max([j for j,n in enumerate(dataArr) if n < 1000])
-                    n0=dataArr[medIdx]                    
-                else:
-                    medIdx=max([j for j,n in enumerate(dataArr) if n < 100])
-                    n0=dataArr[medIdx]
+            # initial condition : last day with less than 100 confirmed to exclude imported confirmed cases
+            if country == 'HU':
+                medIdx=max([j for j,n in enumerate(dataArr) if n < 20])
+                n0=dataArr[medIdx]
+            elif country == 'KR*':
+                medIdx=max([j for j,n in enumerate(dataArr) if n < 9000])
+                n0=dataArr[medIdx]
+            elif country == 'US':
+                medIdx=max([j for j,n in enumerate(dataArr) if n < 1000])
+                n0=dataArr[medIdx]                    
+            else:
+                medIdx=max([j for j,n in enumerate(dataArr) if n < 100])
+                n0=dataArr[medIdx]
 
                     
-                # truncate
-                dataArr=dataArr[medIdx:]
-                dayIndex=[(j[0]-medIdx) for j in enumerate(self.rawDays.to_numpy())][medIdx:]     
-                # fit
-                if country == 'KR*':
-                    r,A,B = 9500, 6, 16 # does not converge ?!
-                    #r,A,B = self.fit_logistic(dayIndex, dataArr)
-                else:
-                    r,A,B, delta_r = self.fit_logistic_with_err(dayIndex, dataArr)
+            # truncate
+            dataArr=dataArr[medIdx:]
+            dayIndex=[(j[0]-medIdx) for j in enumerate(self.rawDays.to_numpy())][medIdx:]     
+            # fit
+            if country == 'KR*':
+                r,A,B = 9500, 6, 16 # does not converge ?!
+                #r,A,B = self.fit_logistic(dayIndex, dataArr)
+            else:
+                r,A,B, delta_r = self.fit_logistic_with_err(dayIndex, dataArr)
 
-                self.params[country] = {'country': country, 
+            self.params[country] = {'country': country, 
                                         'r': r,
                                         'delta_r': delta_r,
                                         'A': A, 
@@ -317,8 +320,8 @@ class logistic_model():
         # figure for data on log-linear plot
         ax = plt.subplot(122)
         for country in self.params:
-            A, B = self.params[country]['A'], self.params[country]['B']
-            r, medIdx = self.params[country]['r'], self.params[country]['medIdx']
+            p = self.death_params[country]
+            A, B, r, medIdx = p['A'], p['B'], p['r'], p['medIdx']
             # raw data points
             plt.scatter(
                 self.days[:len(self.dataByCountry[country])],
@@ -339,6 +342,106 @@ class logistic_model():
             
         
         plt.show()
+        
+    def process_death_cases(self):
+        if not self.deathsByCountry:
+            self.load_data()
+        
+        for ct in self.deathsByCountry:
+            if self.deathsByCountry[ct].to_numpy().max() > 1000:
+                dataArr = self.deathsByCountry[ct].to_numpy()
+                current = dataArr.max()
+                #
+                medIdx=max([j for j,n in enumerate(dataArr) if n < 100])
+                n0=dataArr[medIdx]
+                # truncate
+                dataArr=dataArr[medIdx:]
+                dayIndex=[(j[0]-medIdx) for j in enumerate(self.rawDays.to_numpy())][medIdx:]     
+                # fit
+                r, A, B = self.fit_logistic(dayIndex, dataArr)
+                
+                self.death_params[ct] = {
+                                    'country': ct,
+                                    'current': current,
+                                    'r': r,
+                                    'A': A,
+                                    'B': B,
+                                    'medIdx': medIdx
+                                    }
+                    
+        self.death_params = {k: v for k, v in sorted(self.death_params.items(), key=lambda x: x[1]['current'], reverse=True)} 
+        tbl = []
+        currentIdx = self.days.index(self.lastday)
+        for ct in self.death_params:
+            p = self.death_params[ct]
+            A, B, r, medIdx= p['A'], p['B'], p['r'], p['medIdx']
+            vtomorrow = r/(1+np.exp(-(currentIdx+1-medIdx)/A+B/A))
+            vtoweek= r/(1+np.exp(-(currentIdx+7-medIdx)/A+B/A))
+            tbl.append([ct, p['current'],
+                        np.round(vtomorrow),
+                        np.round(vtoweek), 
+                        str(np.round(r)),
+                        np.round(A*np.log(2.0),2)
+                       ])
+
+
+        print(tabulate(tbl, headers=['Country',
+                                     'Current ('+ self.lastday + ')', 
+                                     'Next day',
+                                     'Next week',                                     
+                                     'Total (predicted)',
+                                     'Duplication rate (days)'
+                                    ]))
+
+    def plot_fitted_deaths(self, yscale='log'):
+        if not self.deathsByCountry:
+            self.load_data()
+            
+        if not self.death_params:
+            self.process_death_cases()
+        
+        # figure for collapsing the curves
+        fig = plt.figure(figsize=(15,10))
+        ax = plt.subplot(121)
+        for country in self.death_params:
+            p = self.death_params[country]
+            A, B, r, medIdx = p['A'], p['B'], p['r'], p['medIdx']
+            dataArr = self.deathsByCountry[country].to_numpy()[medIdx:]
+            dayIndex = [(j[0]-medIdx) for j in enumerate(self.rawDays.to_numpy())][medIdx:]            
+            label= country+', max: '+str(max(dataArr))
+            plt.scatter(dayIndex ,[A*np.log(n/(r-n))+B for n in dataArr], label=label)
+
+        # line
+        plt.plot(range(35), range(35))        
+        ax.legend(prop={'size':14})
+        plt.ylim(-2,35)
+        plt.title("A ln( D/(1-D/r))+B vs t")        
+        plt.xlabel('A ln( D_i/(1-D_i/r))+B')
+        plt.ylabel('t_i [days]')        
+        # figure for data on log-linear plot
+        ax = plt.subplot(122)
+        for country in self.death_params:
+            p = self.death_params[country]
+            A, B, r, medIdx = p['A'], p['B'], p['r'], p['medIdx']
+            # raw data points
+            plt.scatter(
+                self.days[:len(self.deathsByCountry[country])],
+                self.deathsByCountry[country],
+                label=country+', total: '+str(np.round(r))
+            )
+            # curves
+            plt.plot(self.days,[r/(1+np.exp(-(j-medIdx)/A+B/A)) for j,d in enumerate(self.days)],label=country)
+    
+        ax.legend(bbox_to_anchor=(1.02, 1.02), prop={'size':16}, labelspacing=0.8)   
+        plt.yscale(yscale)
+        plt.ylim(20,self.dylim)
+        plt.xticks(range(0,len(self.days),14), self.days[0::14])
+        if yscale=='log':
+            plt.title("D_i (log scale)")
+        else:
+            plt.title("D_i")        
+        
+        
         
         
 if __name__ == '__main__':

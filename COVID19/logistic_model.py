@@ -5,6 +5,111 @@ import matplotlib.pyplot as plt
 from datetime import date, timedelta, datetime
 from tabulate import tabulate
 
+
+class daily_data():
+    def __init__(self, **kwargs):
+        """ 
+        
+        """
+        prop_defaults = {
+                        'source': 'ecdc',
+                        'endDate': '2020-04-15',
+                        'hide': ['KR*'],
+                        'show': [],
+                        'ylim': 300000,
+                        'dylim': 15000
+                        }
+        
+        for prop, default in prop_defaults.items():
+            setattr(self, prop, kwargs.get(prop, default))
+
+        # constants
+        self.EPS = 0.00001
+        self.maxiter = 100
+        self.rate = 1.
+        self.power = 0.5 # exponent for weighting data points
+
+            
+        # init internal containers        
+        self.columnNames = {}
+        self.dataByCountry = {}
+        self.rawDays = [] # needed?
+        self.days = []
+        self.params = {}
+        self.deathsByCountry = {}
+        self.death_params = {}
+
+    def load_ecdc_data(self):
+        tstamp=(datetime.today()).strftime('%Y-%m-%d')
+        path= ('https://www.ecdc.europa.eu/sites/default/files/documents/'
+               'COVID-19-geographic-disbtribution-worldwide-')
+        try:
+            file = path + tstamp+'.xlsx'
+            data = pd.read_excel(file)
+        except:
+            tstamp=(datetime.today()-timedelta(days=1)).strftime('%Y-%m-%d')
+            file = path + tstamp+'.xlsx'
+            data = pd.read_excel(file)
+         
+        df=pd.DataFrame(data)
+        
+        # at some points the columns names got lower cased
+        self.columnNames = {c.lower(): c for c in df.columns.to_numpy()}
+        
+        
+        # init day lists
+        self.startDate='2020-02-15'        
+        self.rawDays = df[(df[self.columnNames['geoid']]=='DE') & 
+                          (df[self.columnNames['daterep']] >= self.startDate)].sort_values(by=self.columnNames['daterep'])[self.columnNames['daterep']]
+        sdate = datetime.strptime(self.startDate, '%Y-%m-%d')
+        edate = datetime.strptime(self.endDate, '%Y-%m-%d')
+        delta = edate - sdate
+        for i in range(delta.days + 1):
+            self.days.append( (sdate + timedelta(days=i)).strftime("%m/%d/%y") )
+         
+        # init countries data
+        boolfilter = {}
+        boolfilter['DE']='DE'
+        boolfilter['IT']='IT'      
+        boolfilter['UK']='UK'
+        boolfilter['JP']='JP'
+        boolfilter['ES']='ES'
+        boolfilter['HU']='HU'
+        boolfilter['FR']='FR'
+        boolfilter['PT']='PT'
+        boolfilter['SE']='SE'
+        boolfilter['AT']='AT'
+        boolfilter['CH']='CH'        
+        #boolfilter['ro']='RO'
+        boolfilter['KR*']='KR'
+        boolfilter['US']='US'
+        boolfilter['NL']='NL'
+        boolfilter['BE']='BE'
+        boolfilter['CA']='CA'
+        
+        
+        for ct in boolfilter:
+            if (self.show and ct in self.show) or (not self.show and ct not in self.hide):
+                    temp = df[(df[self.columnNames['geoid']]==boolfilter[ct]) & (df[self.columnNames['daterep']] >= self.startDate)]
+                
+                    # confirmed cases
+                    self.dataByCountry[ct]=temp.sort_values(by=self.columnNames['daterep'])[self.columnNames['cases']]
+                    # pad with 0 if data starts later
+                    if(len(self.dataByCountry[ct]) < len(self.rawDays)):
+                        zeros =  [0 for i in range(len(self.rawDays)-len(self.dataByCountry[ct]))]
+                        self.dataByCountry[ct] = pd.concat([pd.DataFrame(zeros), self.dataByCountry[ct]], ignore_index=True)
+                    
+                    assert(len(self.dataByCountry[ct]) == len(self.rawDays))
+            
+                    # death cases
+                    self.deathsByCountry[ct]=temp.sort_values(by=self.columnNames['daterep'])[self.columnNames['deaths']]
+                    if(len(self.deathsByCountry[ct]) < len(self.rawDays)):
+                        zeros =  [0 for i in range(len(self.rawDays)-len(self.deathsByCountry[ct]))]
+                        self.deathsByCountry[ct] = pd.concat([pd.DataFrame(zeros), self.deathsByCountry[ct]], ignore_index=True)
+                
+                    assert(len(self.deathsByCountry[ct]) == len(self.rawDays))
+
+
 class logistic_model():
     """ Class to model the COVID-19 confirmed cases with a simple logistic model.
         Data is downloaded from the ECDC website.
@@ -19,8 +124,8 @@ class logistic_model():
                         'endDate': '2020-04-15',
                         'hide': ['KR*'],
                         'show': [],
-                        'ylim': 300000,
-                        'dylim': 15000
+                        'ylim': 500000,
+                        'dylim': 25000
                         }
         
         for prop, default in prop_defaults.items():
@@ -320,7 +425,7 @@ class logistic_model():
         # figure for data on log-linear plot
         ax = plt.subplot(122)
         for country in self.params:
-            p = self.death_params[country]
+            p = self.params[country]
             A, B, r, medIdx = p['A'], p['B'], p['r'], p['medIdx']
             # raw data points
             plt.scatter(
